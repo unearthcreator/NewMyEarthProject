@@ -18,6 +18,7 @@ class EarthMapPageState extends State<EarthMapPage> {
   Point? _longPressPoint;
   List<PointAnnotation> _annotations = [];
   bool _isOnExistingAnnotation = false;
+  PointAnnotation? _selectedAnnotation;
 
   @override
   void initState() {
@@ -33,25 +34,58 @@ class EarthMapPageState extends State<EarthMapPage> {
     });
   }
 
-  Future<void> _onMapTap(ScreenCoordinate screenPoint) async {
+  Future<void> _handleLongPress(ScreenCoordinate screenPoint) async {
     try {
       final features = await _mapboxMap.queryRenderedFeatures(
         RenderedQueryGeometry.fromScreenCoordinate(screenPoint),
         RenderedQueryOptions(layerIds: [_annotationManager.id]),
       );
       
+      logger.i('Features found: ${features.length}');
+      
       _longPressPoint = await _mapboxMap.coordinateForPixel(screenPoint);
       _isOnExistingAnnotation = features.isNotEmpty;
+      
+      logger.i('Is on existing annotation: $_isOnExistingAnnotation');
 
       if (!_isOnExistingAnnotation && _longPressPoint != null) {
-        // Only add new annotation if not on existing one
         logger.i('No annotation at tap location. Adding new annotation.');
         PointAnnotation newAnnotation = await _addAnnotation(_longPressPoint!);
         _annotations.add(newAnnotation);
+        logger.i('Current annotations count: ${_annotations.length}');
+      } else if (_isOnExistingAnnotation && _longPressPoint != null) {
+        // Find the annotation that was clicked
+        _selectedAnnotation = await _findNearestAnnotation(_longPressPoint!);
+        if (_selectedAnnotation != null) {
+          logger.i('Found annotation to remove - starting timer');
+          _startLongPressTimer();
+        }
       }
     } catch (e) {
       logger.e('Error during feature query: $e');
     }
+  }
+
+  Future<PointAnnotation?> _findNearestAnnotation(Point tapPoint) async {
+    double minDistance = double.infinity;
+    PointAnnotation? nearest;
+    
+    for (var annotation in _annotations) {
+      double distance = _calculateDistance(annotation.geometry, tapPoint);
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearest = annotation;
+      }
+    }
+    
+    // Only return if we're within a reasonable distance
+    return minDistance < 2.0 ? nearest : null;
+  }
+
+  double _calculateDistance(Point p1, Point p2) {
+    double latDiff = (p1.coordinates.lat.toDouble() - p2.coordinates.lat.toDouble()).abs();
+    double lngDiff = (p1.coordinates.lng.toDouble() - p2.coordinates.lng.toDouble()).abs();
+    return latDiff + lngDiff; // Manhattan distance, simpler than Haversine
   }
 
   Future<PointAnnotation> _addAnnotation(Point mapPoint) async {
@@ -65,35 +99,26 @@ class EarthMapPageState extends State<EarthMapPage> {
   }
 
   void _startLongPressTimer() {
-    _longPressTimer?.cancel();  // Cancel any existing timer
+    _longPressTimer?.cancel();
+    logger.i('Starting long press timer for removal');
     
-    if (_isOnExistingAnnotation) {
-      // Start 1-second timer for removal only if on existing annotation
-      _longPressTimer = Timer(const Duration(seconds: 1), () async {
-        if (_longPressPoint != null && _annotations.isNotEmpty) {
-          for (var annotation in _annotations) {
-            if (_isPointNearAnnotation(annotation.geometry, _longPressPoint!)) {
-              logger.i('Removing annotation after long press');
-              await _annotationManager.delete(annotation);
-              _annotations.remove(annotation);
-              break;
-            }
-          }
-        }
-      });
-    }
-  }
-
-  bool _isPointNearAnnotation(Point annotationPoint, Point tapPoint) {
-    const double threshold = 0.0001;
-    return (annotationPoint.coordinates.lat - tapPoint.coordinates.lat).abs() < threshold &&
-           (annotationPoint.coordinates.lng - tapPoint.coordinates.lng).abs() < threshold;
+    _longPressTimer = Timer(const Duration(seconds: 1), () async {
+      logger.i('Timer completed');
+      if (_selectedAnnotation != null) {
+        logger.i('Removing selected annotation');
+        await _annotationManager.delete(_selectedAnnotation!);
+        _annotations.remove(_selectedAnnotation);
+        _selectedAnnotation = null;
+      }
+    });
   }
 
   void _cancelLongPressTimer() {
+    logger.i('Cancelling timer');
     _longPressTimer?.cancel();
     _longPressTimer = null;
     _longPressPoint = null;
+    _selectedAnnotation = null;
     _isOnExistingAnnotation = false;
   }
 
@@ -107,17 +132,19 @@ class EarthMapPageState extends State<EarthMapPage> {
   Widget build(BuildContext context) {
     return GestureDetector(
       onLongPressStart: (LongPressStartDetails details) {
+        logger.i('Long press started');
         final screenPoint = ScreenCoordinate(
           x: details.localPosition.dx,
           y: details.localPosition.dy,
         );
-        _onMapTap(screenPoint);
-        _startLongPressTimer();
+        _handleLongPress(screenPoint);
       },
       onLongPressEnd: (LongPressEndDetails details) {
+        logger.i('Long press ended');
         _cancelLongPressTimer();
       },
       onLongPressCancel: () {
+        logger.i('Long press cancelled');
         _cancelLongPressTimer();
       },
       child: Scaffold(
