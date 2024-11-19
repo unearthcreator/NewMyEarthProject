@@ -27,6 +27,7 @@ class EarthMapPageState extends State<EarthMapPage> {
     _gestureHandler = MapGestureHandler(
       mapboxMap: mapboxMap,
       annotationsManager: _annotationsManager,
+      context: context,
     );
 
     setState(() {

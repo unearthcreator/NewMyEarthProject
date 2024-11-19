@@ -16,24 +16,46 @@ class MapAnnotationsManager {
     );
     final annotation = await _annotationManager.create(annotationOptions);
     _annotations.add(annotation);
+    logger.i('Added annotation, total count: ${_annotations.length}');
     return annotation;
   }
 
   Future<void> removeAnnotation(PointAnnotation annotation) async {
-    await _annotationManager.delete(annotation);
-    _annotations.remove(annotation);
+    logger.i('Attempting to remove annotation');
+    try {
+      await _annotationManager.delete(annotation);
+      final removed = _annotations.remove(annotation);
+      if (removed) {
+        logger.i('Successfully removed annotation from list, remaining: ${_annotations.length}');
+      } else {
+        logger.w('Annotation was not found in list');
+      }
+    } catch (e) {
+      logger.e('Error during annotation removal: $e');
+      throw e; // Re-throw to handle in gesture handler
+    }
   }
 
   Future<PointAnnotation?> findNearestAnnotation(Point tapPoint) async {
+    if (_annotations.isEmpty) {
+      logger.i('No annotations to search through');
+      return null;
+    }
+
     double minDistance = double.infinity;
     PointAnnotation? nearest;
     
     for (var annotation in _annotations) {
       double distance = _calculateDistance(annotation.geometry, tapPoint);
+      logger.i('Checking annotation distance: $distance');
       if (distance < minDistance) {
         minDistance = distance;
         nearest = annotation;
       }
+    }
+    
+    if (nearest != null) {
+      logger.i('Found nearest annotation at distance: $minDistance');
     }
     
     // Only return if we're within a reasonable distance
